@@ -125,12 +125,17 @@ class Motor:
         self.enable() # Restore drive
         return positions
     
-    def play(self, positions):
-        t0 = 0
-        for t, p in positions:
-            self.move_to_location(p)
-            sleep(t - t0)
-            t0 = t
+    def play(self, positions, min_dp=9):
+        t0, p0 = time(), self.get_position()
+        
+        for t1, p1 in positions:
+            if abs(p1 - p0) > min_dp:
+                self.move_to_location(p1)
+                p0 = p1
+            
+            dt = (t0 + t1) - time()
+            if dt > 0:
+                sleep(dt)
 
 
 if __name__ == '__main__':
