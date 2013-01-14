@@ -1,5 +1,6 @@
 from serial import Serial
 from sys import stdout
+from time import time, sleep
 
 
 class Motor:
@@ -90,6 +91,9 @@ class Motor:
         self.load_absolute(location)
         self.move()
     
+    def get_position(self):
+        return int(self.command('POS'))
+    
     ###########################################################################
     # Sequence Programs
     ###########################################################################
@@ -104,19 +108,39 @@ class Motor:
     
     def run_prog(self):
         self.command("ENPROG ")
+    
+    ###########################################################################
+    # Record / Play
+    ###########################################################################
+    def record(self, seconds):
+        self.disable() # Do not drive
+        
+        t0, t, p = time(), 0, self.get_position()
+        positions = [(t, p)]
+        
+        while t < seconds:
+            t, p = (time() - t0), self.get_position()
+            positions.append((t, p))
+        
+        self.enable() # Restore drive
+        return positions
+    
+    def play(self, positions):
+        t0 = 0
+        for t, p in positions:
+            self.move_to_location(p)
+            sleep(t - t0)
+            t0 = t
 
 
 if __name__ == '__main__':
-    from time import sleep
-    m = Motor('/dev/ttyUSB0', verbose=True)
+    m = Motor('/dev/ttyUSB0')
     m.home()
     
-    m.start_prog()
-    m.move_to_location(1000)
-    m.delay(1)
-    m.move_to_location(0)
-    m.end_prog()
+    print "Recording motion:"
+    positions = m.record(4)
     
-    for i in range(4):
-        m.run_prog()
-        sleep(2)
+    print "Play motion:"
+    for i in range(3):
+        print "Iteration:", (i+1)
+        m.play(positions)
