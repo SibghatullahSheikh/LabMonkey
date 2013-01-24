@@ -112,15 +112,21 @@ class Motor:
     ###########################################################################
     # Record / Play
     ###########################################################################
-    def record(self, seconds):
+    def record(self, seconds, min_dt=0.01):
         self.disable() # Do not drive
         
-        t0, t, p = time(), 0, self.get_position()
-        positions = [(t, p)]
+        t0, t2, p = time(), 0, self.get_position()
+        positions = [(t2, p)]
+        t1 = t2
         
-        while t < seconds:
-            t, p = (time() - t0), self.get_position()
-            positions.append((t, p))
+        while t2 < seconds:
+            t2 = (time() - t0)
+            positions.append((t2, self.get_position()))
+            
+            dt = (t2 - t1)
+            if dt < min_dt:
+                sleep(min_dt - dt)
+            t1 = t2
         
         self.enable() # Restore drive
         return positions
