@@ -3,36 +3,40 @@ from sys import stdout
 from time import time, sleep
 
 
-class Motor:
+class RS232Transport:
     """
     RS232 Faulhaber Motion Control
     """
-    def __init__(self, port, baud=9600, node=None, verbose=False, log_stream=stdout):
+    def __init__(self, port, baud=9600, verbose=False, log_stream=stdout):
         self.s = Serial(port, baud, timeout=1)
-        self.set_node(node)
         self.verbose = verbose
         self.log_stream = log_stream
-        self.enable()
     
     def log(self, msg):
         if self.verbose:
             self.log_stream.write(msg)
     
-    ###########################################################################
-    # Protocol
-    ###########################################################################
-    def set_node(self, node):
+    def command(self, c):
+        self.log("> %s" % c)
+        self.s.write(c)
+        response = self.s.readline().rstrip()
+        self.log(": %s\n" % response)
+        return response
+
+
+class Motor:
+    def __init__(self, transport, node=None):
+        self.transport = transport
+        
         if node is None:
             self.cmd_format = "%s\n"
         else:
             self.cmd_format = "%d%%s\n" % node
+        
+        self.enable()
     
-    def command(self, command):
-        self.log("> %s" % command)
-        self.s.write(self.cmd_format % command)
-        response = self.s.readline().rstrip()
-        self.log(": %s\n" % response)
-        return response
+    def command(self, c):
+        self.transport.command(self.cmd_format % c)
     
     ###########################################################################
     # Enable / Disable
@@ -145,7 +149,20 @@ class Motor:
 
 
 if __name__ == '__main__':
-    m = Motor('/dev/ttyUSB0')
+    transport = RS232Transport('/dev/ttyUSB0')
+    
+    motors = [Motor(transport, i) for i in [0, 1, 3]]
+    
+    for i in range(3):
+        for m in motors:
+            m.velocity(1000)
+        sleep(3)
+        
+        for m in motors:
+            m.stop()
+        sleep(3)
+    
+    """
     m.home()
     
     print "Recording motion:"
@@ -155,3 +172,4 @@ if __name__ == '__main__':
     for i in range(3):
         print "Iteration:", (i+1)
         m.play(positions)
+    """
