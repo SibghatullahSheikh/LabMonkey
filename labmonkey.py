@@ -1,6 +1,9 @@
 from serial import Serial
 from sys import stdout
 from time import time, sleep
+import json
+
+from configuration import LABMONKEY
 
 
 class RS232Transport:
@@ -36,7 +39,7 @@ class Motor:
         self.enable()
     
     def command(self, c):
-        self.transport.command(self.cmd_format % c)
+        return self.transport.command(self.cmd_format % c)
     
     ###########################################################################
     # Enable / Disable
@@ -112,64 +115,105 @@ class Motor:
     
     def run_prog(self):
         self.command("ENPROG ")
-    
-    ###########################################################################
-    # Record / Play
-    ###########################################################################
-    def record(self, seconds, min_dt=0.01):
-        self.disable() # Do not drive
+
+
+class LabMonkey:
+    def __init__(self):
+        transport = RS232Transport(LABMONKEY['com'], verbose=LABMONKEY['debug'])
         
-        t0, t2, p = time(), 0, self.get_position()
-        positions = [(t2, p)]
-        t1 = t2
-        
-        while t2 < seconds:
-            t2 = (time() - t0)
-            positions.append((t2, self.get_position()))
+        self.motors = []
+        for m_data in LABMONKEY['motors']:
+            m = Motor(transport, m_data['id'])
             
-            dt = (t2 - t1)
-            if dt < min_dt:
-                sleep(min_dt - dt)
-            t1 = t2
-        
-        self.enable() # Restore drive
-        return positions
-    
-    def play(self, positions, min_dp=9):
-        t0, p0 = time(), self.get_position()
-        
-        for t1, p1 in positions:
-            if abs(p1 - p0) > min_dp:
-                self.move_to_location(p1)
-                p0 = p1
+            m.set_max_speed(m_data['rpm'])
+            m.set_max_acceleration(m_data['acc'])
+            m.set_max_deceleration(m_data['acc'])
             
-            dt = (t0 + t1) - time()
-            if dt > 0:
-                sleep(dt)
+            m.disable()
+            
+            self.motors.append(m)
+        
+        self.waypoints = []
+    
+    def set_home(self):
+        for m in self.motors:
+            m.home()
+    
+    def enable_motors(self):
+        for m in self.motors:
+            m.enable()
+    
+    def disable_motors(self):
+        for m in self.motors:
+            m.disable()
+    
+    def play_waypoints(self, waypoints, delay=1):
+        for w in waypoints:
+            for m, p in zip(self.motors, w):
+                m.move_to_location(p)
+            sleep(delay)
+    
+    def parse_int(self, s, default=1):
+        i = default
+        try:
+            i = int(s)
+        except Exception, e:
+            pass
+        return i
+    
+    def run(self):
+        while True:
+            cmd = raw_input("> ")
+            if cmd == 'r':
+                self.waypoints.append([m.get_position() for m in self.motors])
+            
+            elif cmd.startswith('play'):
+                iterations = self.parse_int(cmd[4:])
+                self.enable_motors()
+                for i in range(iterations):
+                    self.play_waypoints(self.waypoints)
+                self.disable_motors()
+            
+            elif cmd.startswith('cycle'):
+                iterations = self.parse_int(cmd[5:])
+                rev_waypoints = list(reversed(self.waypoints))
+                
+                self.enable_motors()
+                for i in range(iterations):
+                    self.play_waypoints(self.waypoints)
+                    self.play_waypoints(rev_waypoints)
+                self.disable_motors()
+                
+            elif cmd == 'show':
+                print self.waypoints
+            
+            elif cmd.startswith('save'):
+                try:
+                    filename = cmd[5:]
+                    with open(filename, 'w') as f:
+                        f.write(json.dumps(self.waypoints, indent=4, separators=(',', ': ')))
+                        print 'Saved waypoints on: %s' % filename
+                except Exception, e:
+                    print e
+            
+            elif cmd.startswith('load'):
+                try:
+                    filename = cmd[5:]
+                    with open(filename, 'r') as f:
+                        self.waypoints = json.loads(f.read())
+                        print 'Loaded waypoints from: %s' % filename
+                except Exception, e:
+                    print e
+            
+            elif cmd == 'reset':
+                self.waypoints = []
+            
+            elif cmd == 'home':
+                self.set_home()
+            
+            elif cmd.startswith('exit'):
+                break
 
 
 if __name__ == '__main__':
-    transport = RS232Transport('/dev/ttyUSB0')
-    
-    motors = [Motor(transport, i) for i in [0, 1, 3]]
-    
-    for i in range(3):
-        for m in motors:
-            m.velocity(1000)
-        sleep(3)
-        
-        for m in motors:
-            m.stop()
-        sleep(3)
-    
-    """
-    m.home()
-    
-    print "Recording motion:"
-    positions = m.record(4)
-    
-    print "Play motion:"
-    for i in range(3):
-        print "Iteration:", (i+1)
-        m.play(positions)
-    """
+    LabMonkey().run()
