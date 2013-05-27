@@ -2,11 +2,11 @@ LABMONKEY = {
     'com': 'COM4',
     
     'motors': [
-        {'id': 1, 'rpm': 3000, 'acc':10000},
-        {'id': 2, 'rpm': 200, 'acc':500},
-        {'id': 3, 'rpm': 300, 'acc':500},
-        {'id': 4, 'rpm': 600, 'acc':1000},
-        {'id': 5, 'rpm': 800, 'acc':1000},
+        {'id': 1, 'max_vel': 3000, 'acc':5000},
+        {'id': 2, 'max_vel':  200, 'acc': 500},
+        {'id': 3, 'max_vel':  300, 'acc': 500},
+        {'id': 4, 'max_vel': 1500, 'acc':5000},
+        {'id': 5, 'max_vel': 2000, 'acc':5000},
     ],
     
     'debug': False

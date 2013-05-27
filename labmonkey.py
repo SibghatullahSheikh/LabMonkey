@@ -1,6 +1,6 @@
 from serial import Serial
 from sys import stdout
-from time import time, sleep
+from time import sleep
 import json
 
 from configuration import LABMONKEY
@@ -28,6 +28,8 @@ class RS232Transport:
 
 
 class Motor:
+    POSITION_ATTAINED = 0x10000
+    
     def __init__(self, transport, node=None):
         self.transport = transport
         
@@ -38,11 +40,14 @@ class Motor:
         
         self.enable()
     
+    def set_max_vel(self, v):
+        self.max_vel = v
+    
     def command(self, c):
         return self.transport.command(self.cmd_format % c)
     
     ###########################################################################
-    # Enable / Disable
+    # Enable / Disable / Status
     ###########################################################################
     def enable(self):
         return self.command('EN')
@@ -52,6 +57,9 @@ class Motor:
     
     def __del__(self):
         self.disable()
+    
+    def operation_status(self):
+        return int(self.command('OST'))
     
     ###########################################################################
     # Velocity Control
@@ -70,6 +78,11 @@ class Motor:
     
     def set_max_deceleration(self, dec):
         self.command("DEC%d" % dec)
+    
+    def set_acceleration(self, acc):
+        self.acceleration = acc
+        self.set_max_acceleration(acc)
+        self.set_max_deceleration(acc)
     
     ###########################################################################
     # Position Control
@@ -93,13 +106,19 @@ class Motor:
     
     def load_absolute(self, position):
         self.command('LA%d' % position)
+        self.last_position = position
     
     def move_to_location(self, location):
         self.load_absolute(location)
         self.move()
     
     def get_position(self):
-        return int(self.command('POS'))
+        self.last_position = int(self.command('POS'))
+        return self.last_position
+    
+    def wait_position(self):
+        while (self.operation_status() & Motor.POSITION_ATTAINED) == 0:
+            sleep(0.1)
     
     ###########################################################################
     # Sequence Programs
@@ -111,7 +130,7 @@ class Motor:
         self.command("END")
     
     def delay(self, seconds):
-        self.command("DELAY%d" % int(seconds*100))
+        self.command("DELAY%d" % int(seconds*1000))
     
     def run_prog(self):
         self.command("ENPROG ")
@@ -124,16 +143,10 @@ class LabMonkey:
         self.motors = []
         for m_data in LABMONKEY['motors']:
             m = Motor(transport, m_data['id'])
-            
-            m.set_max_speed(m_data['rpm'])
-            m.set_max_acceleration(m_data['acc'])
-            m.set_max_deceleration(m_data['acc'])
-            
+            m.set_max_vel(m_data['max_vel'])
+            m.set_acceleration(m_data['acc'])
             m.disable()
-            
             self.motors.append(m)
-        
-        self.waypoints = []
     
     def set_home(self):
         for m in self.motors:
@@ -147,11 +160,34 @@ class LabMonkey:
         for m in self.motors:
             m.disable()
     
-    def play_waypoints(self, waypoints, delay=1):
+    def wait_position(self):
+        for m in self.motors:
+            m.wait_position()
+    
+    def get_positions(self):
+        return [m.get_position() for m in self.motors]
+    
+    def play_waypoints(self, waypoints, wait_completion=True):
+        self.get_positions() # update motor positions
+        
         for w in waypoints:
+            # Tweak motor velocities to finish motion at the same time
+            movement_time = 0
+            distances = []
+            for m, p in zip(self.motors, w):
+                d = abs(m.last_position - p)
+                distances.append(d)
+                movement_time = max(movement_time, (d / m.max_vel))
+            
+            for m, d in zip(self.motors, distances):
+                v = max((d / movement_time), 60)
+                m.set_max_speed(v)
+            
             for m, p in zip(self.motors, w):
                 m.move_to_location(p)
-            sleep(delay)
+            
+            if wait_completion:
+                self.wait_position()
     
     def parse_int(self, s, default=1):
         i = default
@@ -162,56 +198,56 @@ class LabMonkey:
         return i
     
     def run(self):
+        waypoints = []
+        
         while True:
-            cmd = raw_input("> ")
-            if cmd == 'r':
-                self.waypoints.append([m.get_position() for m in self.motors])
+            cmd = raw_input("> ").split()
+            if cmd[0] == 'r':
+                waypoints.append(self.get_positions())
             
-            elif cmd.startswith('play'):
-                iterations = self.parse_int(cmd[4:])
+            elif cmd[0] == 'play':
+                iterations = self.parse_int(cmd[1])
                 self.enable_motors()
                 for i in range(iterations):
-                    self.play_waypoints(self.waypoints)
+                    self.play_waypoints(waypoints)
                 self.disable_motors()
             
-            elif cmd.startswith('cycle'):
-                iterations = self.parse_int(cmd[5:])
-                rev_waypoints = list(reversed(self.waypoints))
+            elif cmd[0] == 'cycle':
+                iterations = self.parse_int(cmd[1])
+                rev_waypoints = list(reversed(waypoints))
                 
                 self.enable_motors()
                 for i in range(iterations):
-                    self.play_waypoints(self.waypoints)
+                    self.play_waypoints(waypoints)
                     self.play_waypoints(rev_waypoints)
                 self.disable_motors()
-                
-            elif cmd == 'show':
-                print self.waypoints
             
-            elif cmd.startswith('save'):
+            elif cmd[0] == 'show':
+                print waypoints
+            
+            elif cmd[0] == 'save':
                 try:
-                    filename = cmd[5:]
-                    with open(filename, 'w') as f:
-                        f.write(json.dumps(self.waypoints, indent=4, separators=(',', ': ')))
-                        print 'Saved waypoints on: %s' % filename
+                    with open(cmd[1], 'w') as f:
+                        f.write(json.dumps(waypoints, indent=4, separators=(',', ': ')))
+                        print 'Saved waypoints on: %s' % cmd[1]
                 except Exception, e:
                     print e
             
-            elif cmd.startswith('load'):
+            elif cmd[0] == 'load':
                 try:
-                    filename = cmd[5:]
-                    with open(filename, 'r') as f:
-                        self.waypoints = json.loads(f.read())
-                        print 'Loaded waypoints from: %s' % filename
+                    with open(cmd[1], 'r') as f:
+                        waypoints = json.loads(f.read())
+                        print 'Loaded waypoints from: %s' % cmd[1]
                 except Exception, e:
                     print e
             
-            elif cmd == 'reset':
-                self.waypoints = []
+            elif cmd[0] == 'clear':
+                waypoints = []
             
-            elif cmd == 'home':
+            elif cmd[0] == 'home':
                 self.set_home()
             
-            elif cmd.startswith('exit'):
+            elif cmd[0] == 'exit':
                 break
 
 
